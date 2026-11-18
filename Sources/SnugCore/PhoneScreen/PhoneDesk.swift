@@ -726,7 +726,7 @@ public final class PhoneDesk {
     @discardableResult
     private func fill(_ p: inout Placement, on id: DisplayID) async -> CGRect? {
         await switchWidth(id, to: p.width)
-        guard let area = displays.windowArea(id), let got = await windows.move(p.window.key, to: area) else { return nil }
+        guard let area = displays.windowArea(id), let got = await moveOntoPhone(p.window, to: area) else { return nil }
         p.settled = got
         // App 关窗时存下的就是这个大小：窗口在 Snug 之外没了，凭它认出回来的是不是它
         p.record.filled = got
@@ -744,6 +744,36 @@ public final class PhoneDesk {
         Log.info("\(p.window.label) 在 \(current) 宽的手机屏上铺不满（App 限定了最小尺寸，实际 \(got.short)），换到 \(width) 宽")
         p.width = width
         return await fill(&p, on: id)
+    }
+
+    /// 有些 App 的窗口从下方或远处的屏幕直达手机屏时，会把目标位置夹回原来的屏幕。
+    /// 先试直达；位置没过去就把窗口放到主屏中间，让 App 更新自己认定的当前屏幕，再试一次。
+    /// 最终原点仍不对就交回失败，不能把还留在别处的窗口当成已经放上手机屏。
+    private func moveOntoPhone(_ window: WindowInfo, to target: CGRect) async -> CGRect? {
+        guard let first = await windows.move(window.key, to: target) else { return nil }
+        if Self.sameOrigin(first, target) { return first }
+        guard let main = displays.mainArea() else {
+            Log.warn("\(window.label) 直达手机屏后位置没过去（实际 \(first.short)），又读不到主屏，无法中转")
+            return nil
+        }
+        let size = CGSize(width: min(first.width, main.width), height: min(first.height, main.height))
+        let staging = CGRect(x: (main.midX - size.width / 2).rounded(), y: (main.midY - size.height / 2).rounded(),
+                             width: size.width, height: size.height)
+        guard let staged = await windows.move(window.key, to: staging),
+              main.contains(CGPoint(x: staged.midX, y: staged.midY)) else {
+            Log.warn("\(window.label) 直达手机屏后位置没过去（实际 \(first.short)），主屏中转也失败")
+            return nil
+        }
+        Log.info("\(window.label) 直达手机屏后位置没过去（实际 \(first.short)），已经过主屏中转再试")
+        guard let final = await windows.move(window.key, to: target), Self.sameOrigin(final, target) else {
+            Log.warn("\(window.label) 经过主屏中转仍挪不上手机屏")
+            return nil
+        }
+        return final
+    }
+
+    private static func sameOrigin(_ frame: CGRect, _ target: CGRect) -> Bool {
+        abs(frame.minX - target.minX) < 2 && abs(frame.minY - target.minY) < 2
     }
 
     /// 收起列表、露出手机屏上的窗口：先换到它那一档、重新铺满，再收列表、激活它。

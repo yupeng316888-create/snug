@@ -159,6 +159,8 @@ final class FakeWindows: WindowControl {
     private let movesBlocked = Locked(false)
     private let zoomBlocked = Locked(false)
     private let movesIgnored = Locked(false)
+    /// 这些窗口从别的屏直达手机屏会被 App 留在原处；先搬到主屏一次后才接受跨屏移动
+    private let mainStopRequired = Locked<Set<WindowKey>>([])
     private let grows = Locked(false)
     private let minSizes = Locked<[WindowKey: CGSize]>([:])
     private let moveHook = Locked<(@Sendable (WindowKey) -> Void)?>(nil)
@@ -180,6 +182,8 @@ final class FakeWindows: WindowControl {
     func blockMoves(_ on: Bool = true) { movesBlocked.withLock { $0 = on } }
     /// App 不认挪动（不退全屏、拒绝辅助功能改位置）：读得到，挪了没反应；传 false 恢复
     func ignoreMoves(_ on: Bool = true) { movesIgnored.withLock { $0 = on } }
+    /// 模拟某些 App 从下方屏幕直达手机屏失败、经过主屏后才能继续移动
+    func requireMainStop(_ key: WindowKey) { _ = mainStopRequired.withLock { $0.insert(key) } }
     /// 只是字号按键发不出去（找窗口那一下刚好超时），别的照常；传 false 恢复
     func blockZoom(_ on: Bool = true) { zoomBlocked.withLock { $0 = on } }
     /// 像终端那样：调字号时保持行列数，窗口跟着变大
@@ -309,6 +313,11 @@ final class FakeWindows: WindowControl {
         moveHook.withLock { $0 }?(window)
         journal.add("move \(window.id) \(frame.short)\(mark)")
         if movesIgnored.withLock({ $0 }) { return self.window(window)?.frame }
+        if mainStopRequired.withLock({ $0.contains(window) }) {
+            let center = CGPoint(x: frame.midX, y: frame.midY)
+            guard FakeDisplays.main.contains(center) else { return self.window(window)?.frame }
+            _ = mainStopRequired.withLock { $0.remove(window) }
+        }
         var got = frame
         if let min = minSizes.withLock({ $0[window] }) {
             got.size = CGSize(width: max(got.width, min.width), height: max(got.height, min.height))

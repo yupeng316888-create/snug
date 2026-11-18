@@ -54,6 +54,25 @@ struct PhoneDeskTests {
         #expect(rig.desk.state.placed?.zoomable == false)
     }
 
+    @Test("窗口从下方屏幕直达手机屏失败：先经过主屏，再搬到手机屏")
+    func pullWindowThroughMainScreen() async throws {
+        let rig = try Rig()
+        let workBuddy = WindowInfo(key: WindowKey(pid: 20, id: 20), app: "WorkBuddy", bundleID: "com.example.workbuddy", title: "WorkBuddy")
+        let lowerScreen = CGRect(x: 2053, y: 1110, width: 1226, height: 816)
+        rig.windows.add(workBuddy.key, frame: lowerScreen, info: workBuddy)
+        rig.windows.requireMainStop(workBuddy.key)
+        await rig.ready()
+
+        await rig.pull(workBuddy)
+
+        let moves = rig.journal.all.filter { $0.hasPrefix("move 20 ") }
+        #expect(moves.count == 3)
+        #expect(moves.first == "move 20 \(phoneArea.short) ✎")
+        #expect(moves.last == "move 20 \(phoneArea.short) ✎")
+        #expect(rig.windows.window(workBuddy.key)?.frame == phoneArea)
+        #expect(rig.desk.state.placed?.window == workBuddy)
+    }
+
     @Test("换一个窗口：旧窗口先缩回字号、回原位，再放新的")
     func switchWindows() async throws {
         let rig = try Rig()
@@ -711,6 +730,10 @@ struct PhoneDeskTests {
         await rig.pull(finder)
         #expect(!rig.journal.all.contains { $0.hasPrefix("width") })
         #expect(rig.displays.widths[101] == 540)
+        #expect(rig.windows.window(finder.key)?.frame == finderHome)
+        #expect(rig.desk.state.placed == nil)
+        #expect(rig.record == nil)
+        #expect(rig.desk.state.notice == .windowUnresponsive(app: finder.app))
     }
 
     @Test("在列表里调字号：列表露着时不换档、不补铺；返回窗口时再换过去")
